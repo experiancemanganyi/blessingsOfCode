@@ -1,0 +1,143 @@
+
+#include "DNNetwork_XP.mqh"
+
+// Input parameters
+input int StateSize = 10;       // Number of input features for state
+input int ActionSize = 3;       // Number of possible actions (e.g., buy, sell, hold)
+input string ModelFileName = "trading_rl_policy.nn"; // Filename of the saved policy network
+
+// Global variables
+NeuralN* trainedNetwork;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   // Initialize the neural network with the same architecture used during training
+   trainedNetwork = new NeuralN(
+      StateSize,            // State size (inputs)
+      24,                   // First hidden layer size
+      12,                   // Second hidden layer size
+      ActionSize,           // Action size (outputs)
+      0.001,                // Learning rate (not important for inference)
+      0.9                   // Momentum (not important for inference)
+   );
+   
+   // Load the trained model
+   if(!trainedNetwork.load(ModelFileName))
+   {
+      Print("Failed to load trained network from ", ModelFileName);
+      return(INIT_FAILED);
+   }
+   
+   Print("Successfully loaded trained network from ", ModelFileName);
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   // Clean up
+   delete trainedNetwork;
+}
+
+//+------------------------------------------------------------------+
+//| Get current market state                                         |
+//+------------------------------------------------------------------+
+void GetMarketState(double &state[])
+{
+   // Same state extraction function used during training
+   // Resize state array
+   ArrayResize(state, StateSize);
+   
+   // Example: populate state with market data (customize for your needs)
+   // This must match exactly how you constructed states during training
+   
+   // Example features:
+   state[0] = (Close[0] / iMA(NULL, 0, 20, 0, MODE_SMA, PRICE_CLOSE, 0)) - 1.0;
+   state[1] = (Close[0] / Close[5]) - 1.0;
+   state[2] = (Close[0] / Close[20]) - 1.0;
+   
+   double rsi = iRSI(NULL, 0, 14, PRICE_CLOSE, 0);
+   state[3] = (rsi - 50.0) / 50.0;
+   
+   double macd_main, macd_signal, macd_hist;
+   iMACD(NULL, 0, 12, 26, 9, PRICE_CLOSE, 0, macd_main, macd_signal, macd_hist);
+   state[4] = MathMin(MathMax(macd_hist / 0.001, -1.0), 1.0);
+   
+   double bb_upper, bb_lower;
+   iBands(NULL, 0, 20, 2.0, 0, PRICE_CLOSE, MODE_UPPER, 0, bb_upper);
+   iBands(NULL, 0, 20, 2.0, 0, PRICE_CLOSE, MODE_LOWER, 0, bb_lower);
+   state[5] = (2.0 * ((Close[0] - bb_lower) / (bb_upper - bb_lower))) - 1.0;
+   
+   double atr = iATR(NULL, 0, 14, 0);
+   state[6] = MathMin(atr / (Close[0] * 0.01), 1.0);
+   
+   MqlDateTime time_struct;
+   TimeCurrent(time_struct);
+   state[7] = MathSin(time_struct.hour * 2 * M_PI / 24);
+   state[8] = MathCos(time_struct.hour * 2 * M_PI / 24);
+   state[9] = (time_struct.day_of_week - 3) / 3.0;
+}
+
+//+------------------------------------------------------------------+
+//| Execute trading action                                           |
+//+------------------------------------------------------------------+
+void ExecuteAction(int action)
+{
+   // Same action execution logic you used during training
+   switch(action)
+   {
+      case 0: // Buy
+         // Real trading logic to open buy order
+         Print("Action: BUY");
+         // Example: OrderSend(...) for a buy order
+         break;
+         
+      case 1: // Sell
+         // Real trading logic to open sell order
+         Print("Action: SELL");
+         // Example: OrderSend(...) for a sell order
+         break;
+         
+      case 2: // Hold/Close
+         // Logic to close positions or hold
+         Print("Action: HOLD/CLOSE");
+         // Example: OrderClose(...) if you have open positions
+         break;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Get current market state
+   double currentState[];
+   GetMarketState(currentState);
+   
+   // Get Q-values from the trained network
+   double qValues[];
+   ArrayResize(qValues, ActionSize);
+   trainedNetwork.prediction(currentState, qValues);
+   
+   // Select best action (highest Q-value)
+   int bestAction = 0;
+   double maxQ = qValues[0];
+   
+   for(int i = 1; i < ActionSize; i++)
+   {
+      if(qValues[i] > maxQ)
+      {
+         maxQ = qValues[i];
+         bestAction = i;
+      }
+   }
+   
+   // Execute the best action
+   ExecuteAction(bestAction);
+}
